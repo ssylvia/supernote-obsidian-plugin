@@ -7,6 +7,10 @@ type CustomDictionaryEntry = {
 	source: string,
 	/** String to replace if the source text is matched */
 	replace: string,
+	/** Whether the source text should be matched case-sensitively */
+	matchCase?: boolean,
+	/** Whether the source text should be matched as a whole word */
+	matchWord?: boolean
 }
 
 /** Settings for Supernote's plugin custom dictionary options */
@@ -40,6 +44,18 @@ function createDictionaryEntryUI({entry, tbody, plugin}: {entry: CustomDictionar
 
 	// Create dictionary entry options
 	const optionsTd = tr.createEl('td');
+	const matchCaseButton = optionsTd.createEl('button');
+		matchCaseButton.ariaLabel = 'Match case';
+		setIcon(matchCaseButton, 'case-sensitive');
+		if (entry.matchCase !== false) {
+			matchCaseButton.addClass('active');
+		}
+	const matchWordButton = optionsTd.createEl('button');
+		matchWordButton.ariaLabel = 'Match whole word';
+		setIcon(matchWordButton, 'whole-word');
+		if (entry.matchWord !== false) {
+			matchWordButton.addClass('active');
+		}
 		optionsTd.addClass('supernote-settings-custom-dictionary-entry-options');
 	const moveUpButton = optionsTd.createEl('button');
 		moveUpButton.ariaLabel = 'Move entry up';
@@ -58,12 +74,26 @@ function createDictionaryEntryUI({entry, tbody, plugin}: {entry: CustomDictionar
 		const index = Array.from(tbody.children).indexOf(tr)
 		plugin.settings.customDictionary[index] = {
 			source: sourceInput.value,
-			replace: replaceInput.value
+			replace: replaceInput.value,
+			matchWord: matchWordButton.hasClass('active'),
+			matchCase: matchCaseButton.hasClass('active'),
 		};
 		await plugin.saveSettings();
 	}
 	sourceInput.addEventListener('input', updateDictionaryEntry);
 	replaceInput.addEventListener('input', updateDictionaryEntry);
+
+	// Toggle match case when match case button is clicked
+	matchCaseButton.addEventListener('click', async () => {
+		matchCaseButton.toggleClass('active', !matchCaseButton.hasClass('active'));
+		await updateDictionaryEntry();
+	});
+
+	// Toggle match word when match word button is clicked
+	matchWordButton.addEventListener('click', async () => {
+		matchWordButton.toggleClass('active', !matchWordButton.hasClass('active'));
+		await updateDictionaryEntry();
+	});
 
 	// Move dictionary entry up when move up button is clicked
 	moveUpButton.addEventListener('click', async () => {
@@ -111,7 +141,7 @@ function createDictionaryTableUI(containerEl: HTMLElement, plugin: SupernotePlug
 		.addClasses(['setting-item', CONTAINER_CLASSNAME]);
 	dictionaryEntriesContainer.createDiv({ text: 'Custom Dictionary' })
 		.addClass('setting-item-name');
-	dictionaryEntriesContainer.createDiv({ text: 'Add an entry for every text string you would like to replace from Supernote\'s recognized text. The plugin will match and replace text based on the order in the table, starting from the top and moving to the bottom. So, if you want a more specific text to be replaced first, make sure to add it at the top. This way, the plugin can fall back to less strict matching if needed.' })
+	dictionaryEntriesContainer.createDiv({ text: 'Add an entry for every text string you would like to replace from Supernote\'s recognized text. The plugin will match and replace text based on the order in the table, starting from the top and moving to the bottom. So, if you want a more specific text to be replaced first, make sure to add it at the top. This way, the plugin can fall back to less strict matching if needed. Note, all case-sensitive matches will run as a group before case-insensitive matches.' })
 		.addClasses(['setting-item-description']);
 
 	// Create the dictionary entries table
@@ -177,10 +207,36 @@ export function createCustomDictionarySettingsUI(containerEl: HTMLElement, plugi
 	createDictionaryTableUI(customDictionaryContainer, plugin);
 }
 
+// Escape special characters in a string to be used in a regular expression
+function escapeRegExp(string: string): string {
+	return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 // Replace text with custom dictionary entries
 export function replaceTextWithCustomDictionary(text: string, customDictionary: CustomDictionarySettings['customDictionary']): string {
-	for (const entry of customDictionary) {
-		text = text.replace(new RegExp(entry.source, 'g'), entry.replace);
-	}
-	return text;
+	let newText = text;
+
+	const [caseInsensitiveMatchers, caseSensitiveMatchers] = customDictionary.reduce((acc, entry) => {
+		const source = entry.source;
+		const matcher = entry.matchWord ? `\\b${escapeRegExp(source)}\\b` : escapeRegExp(source);
+		if (entry.matchCase) {
+			acc[1].push(matcher);
+		} else {
+			acc[0].push(matcher);
+		}
+		return acc;
+	}, [[], []] as [string[], string[]]);
+
+
+	newText = newText.replace(new RegExp(caseSensitiveMatchers.join('|'), 'g'), (match) => {
+		const entry = customDictionary.find(entry => entry.source === match);
+		return entry ? entry.replace : match;
+	});
+
+	newText = newText.replace(new RegExp(caseInsensitiveMatchers.join('|'), 'gi'), (match) => {
+		const entry = customDictionary.find(entry => entry.source.toLocaleUpperCase() === match.toLocaleUpperCase());
+		return entry ? entry.replace : match;
+	});
+
+	return newText;
 }
