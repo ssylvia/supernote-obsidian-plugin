@@ -97,6 +97,18 @@ class VaultWriter {
 		return imgs;
 	}
 
+	async writeNoteToClipboard(file: TFile, sn: SupernoteX, imgs: TFile[] | null) {
+		let content = '';
+
+		for (let i = 0; i < sn.pages.length; i++) {
+			if (sn.pages[i].text !== undefined && sn.pages[i].text.length > 0) {
+				content += `${processSupernoteText(sn.pages[i].text, this.settings)}\n`;
+			}
+		}
+
+		await navigator.clipboard.writeText(content);
+	}
+
 	async attachMarkdownFile(file: TFile) {
 		const note = await this.app.vault.readBinary(file);
 		let sn = new SupernoteX(new Uint8Array(note));
@@ -110,6 +122,13 @@ class VaultWriter {
 
 		const imgs = await this.writeImageFiles(file, sn);
 		this.writeMarkdownFile(file, sn, imgs);
+	}
+
+	async copyNoteToClipboard(file: TFile) {
+		const note = await this.app.vault.readBinary(file);
+		let sn = new SupernoteX(new Uint8Array(note));
+
+		this.writeNoteToClipboard(file, sn, null);
 	}
 }
 
@@ -145,6 +164,16 @@ export class SupernoteView extends FileView {
 		let images = await toImage(sn);
 
 		if (this.settings.showExportButtons) {
+
+			const coptNoteToClipboard = container.createEl("p").createEl("button", {
+				text: "Copy text to clipboard",
+				cls: "mod-cta",
+			});
+
+			coptNoteToClipboard.addEventListener("click", async () => {
+				vw.copyNoteToClipboard(file);
+			});
+
 			const exportNoteBtn = container.createEl("p").createEl("button", {
 				text: "Attach markdown to vault",
 				cls: "mod-cta",
