@@ -1,8 +1,9 @@
 import { App, Modal, TFile, Plugin, PluginSettingTab, Editor, Setting, MarkdownView, WorkspaceLeaf, FileView } from 'obsidian';
 import { SupernoteX, toImage, fetchMirrorFrame } from 'supernote-typescript';
 import { CustomDictionarySettings, CUSTOM_DICTIONARY_DEFAULT_SETTINGS, createCustomDictionarySettingsUI, replaceTextWithCustomDictionary } from './customDictionary';
+import { addDailyNoteImporterCommand, createDailyNoteImporterSettings, DAILY_NOTE_IMPORTER_DEFAULT_SETTINGS, DailyNoteImporterSettings } from './dailyNoteImporter';
 
-interface SupernotePluginSettings extends CustomDictionarySettings {
+interface SupernotePluginSettings extends CustomDictionarySettings, DailyNoteImporterSettings {
 	mirrorIP: string;
 	invertColorsWhenDark: boolean;
 	showTOC: boolean;
@@ -17,6 +18,7 @@ const DEFAULT_SETTINGS: SupernotePluginSettings = {
 	showExportButtons: true,
 	collapseRecognizedText: false,
 	...CUSTOM_DICTIONARY_DEFAULT_SETTINGS,
+	...DAILY_NOTE_IMPORTER_DEFAULT_SETTINGS,
 };
 
 function generateTimestamp(): string {
@@ -354,6 +356,8 @@ export default class SupernotePlugin extends Plugin {
 				return false;
 			},
 		});
+
+		addDailyNoteImporterCommand(this);
 	}
 
 	onunload() {
@@ -509,6 +513,9 @@ class SupernoteSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				})
 			);
+
+		// Add daily note importer settings to the settings tab
+		createDailyNoteImporterSettings(this.plugin, containerEl);
 
 		// Add custom dictionary settings to the settings tab
 		createCustomDictionarySettingsUI(containerEl, this.plugin);
