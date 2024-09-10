@@ -41,7 +41,7 @@ function generateTimestamp(): string {
  * @param settings - The settings for the Supernote plugin.
  * @returns The processed text.
  */
-function processSupernoteText(text: string, settings: SupernotePluginSettings): string {
+export function processSupernoteText(text: string, settings: SupernotePluginSettings): string {
 	if (settings.isCustomDictionaryEnabled) {
 		return replaceTextWithCustomDictionary(text, settings.customDictionary);
 	}

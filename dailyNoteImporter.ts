@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
-import SupernotePlugin from "./main";
+import SupernotePlugin, { processSupernoteText } from "./main";
 import { Platform, Setting, TAbstractFile } from 'obsidian';
+import { SupernoteX } from './supernote-typescript/lib';
 
 
 /** Settings for Supernote's plugin daily note importer */
@@ -97,6 +98,22 @@ async function onDailyNoteCreate(file: TAbstractFile, plugin: SupernotePlugin) {
 	} catch {
 		// File does not exist
 	}
+
+	// Read the content of the daily note file from supernote
+	const note = await plugin.app.vault.readBinary(importedNoteFile);
+	const sn = new SupernoteX(new Uint8Array(note));
+
+	let ocrText = '';
+
+	for (let i = 0; i < sn.pages.length; i++) {
+		if (sn.pages[i].text !== undefined && sn.pages[i].text.length > 0) {
+			ocrText += `${processSupernoteText(sn.pages[i].text, plugin.settings)}\n`;
+		}
+	}
+
+	await plugin.app.vault.process(dailyNoteFile, (data) => {
+		return data.replace('{{SUPERNOTE_TEXT}}', ocrText)
+	});
 
 }
 
