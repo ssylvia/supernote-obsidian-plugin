@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import SupernotePlugin, { processSupernoteText } from "./main";
-import { Platform, Setting, TAbstractFile } from 'obsidian';
+import { Notice, Platform, Setting, TAbstractFile } from 'obsidian';
 import { SupernoteX } from './supernote-typescript/lib';
 
 
@@ -87,11 +87,6 @@ async function onDailyNoteCreate(file: TAbstractFile, plugin: SupernotePlugin) {
 	// Copy the note file to the import path
 	const importedNoteFile = await plugin.app.vault.createBinary(join(importPath, noteFileName), content)
 
-	// Append the note file to the daily note as a resource
-	await plugin.app.vault.process(dailyNoteFile, (data) => {
-		return data.replace('{{DAILY_NOTE_ATTACHMENT}}', `![[${noteFileName}]]`)
-	});
-
 	try {
         const newLeaf = plugin.app.workspace.getLeaf('split', 'vertical')
         newLeaf.openFile(importedNoteFile); 
@@ -111,9 +106,15 @@ async function onDailyNoteCreate(file: TAbstractFile, plugin: SupernotePlugin) {
 		}
 	}
 
+	await navigator.clipboard.writeText(ocrText);
+
+	// Append the note file to the daily note as a resource
 	await plugin.app.vault.process(dailyNoteFile, (data) => {
-		return data.replace('{{SUPERNOTE_TEXT}}', ocrText)
+		return data.replace('{{DAILY_NOTE_ATTACHMENT}}', `![[${noteFileName}]]`)
 	});
+
+	// Notify the user that the note has been imported
+	new Notice('Daily note imported successfully and copied to clipboard');
 
 }
 
