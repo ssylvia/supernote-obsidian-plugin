@@ -22,6 +22,11 @@ function getYYYYMMDD(date = new Date()) {
 	return `${year}${month}${day}`;
   }
 
+function stringYYYYMMDDToDate(dateString: string) {
+	const [year, month, day] = dateString.split('-').map(Number); 
+	return new Date(year, month - 1, day); // Month is zero-indexed
+  }
+
 // Settings for the daily note importer
 export function createDailyNoteImporterSettings(plugin: SupernotePlugin, containerEl: HTMLElement) {
 	new Setting(containerEl)
@@ -60,7 +65,7 @@ async function onDailyNoteCreate(file: TAbstractFile, plugin: SupernotePlugin) {
 		return;
 	}
 
-	const dailyNoteDate = new Date(dailyNoteFile.basename);
+	const dailyNoteDate = stringYYYYMMDDToDate(dailyNoteFile.basename)
 	const noteFileName = `${getYYYYMMDD(dailyNoteDate)}.note`;
 	const srcNoteFile = join(plugin.settings.dailyNotesSupernotePath ?? '', noteFileName);
 	const doesNoteExist = existsSync(srcNoteFile);
