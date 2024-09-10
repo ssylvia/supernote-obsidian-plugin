@@ -1,7 +1,7 @@
 import { App, Modal, TFile, Plugin, PluginSettingTab, Editor, Setting, MarkdownView, WorkspaceLeaf, FileView } from 'obsidian';
 import { SupernoteX, toImage, fetchMirrorFrame } from 'supernote-typescript';
 import { CustomDictionarySettings, CUSTOM_DICTIONARY_DEFAULT_SETTINGS, createCustomDictionarySettingsUI, replaceTextWithCustomDictionary } from './customDictionary';
-import { addDailyNoteImporterCommand, createDailyNoteImporterSettings, DAILY_NOTE_IMPORTER_DEFAULT_SETTINGS, DailyNoteImporterSettings } from './dailyNoteImporter';
+import { addDailyNotesImporter, createDailyNoteImporterSettings, DAILY_NOTE_IMPORTER_DEFAULT_SETTINGS, DailyNoteImporterSettings } from './dailyNoteImporter';
 
 interface SupernotePluginSettings extends CustomDictionarySettings, DailyNoteImporterSettings {
 	mirrorIP: string;
@@ -357,7 +357,8 @@ export default class SupernotePlugin extends Plugin {
 			},
 		});
 
-		addDailyNoteImporterCommand(this);
+
+		addDailyNotesImporter(this);
 	}
 
 	onunload() {

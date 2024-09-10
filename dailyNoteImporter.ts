@@ -1,13 +1,15 @@
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import SupernotePlugin from "./main";
-import { Setting } from 'obsidian';
+import { Platform, Setting, TAbstractFile } from 'obsidian';
 
 
 /** Settings for Supernote's plugin daily note importer */
 export interface DailyNoteImporterSettings {
 	/** The location of Supernote daily note files  */
-	dailyNotesPath?: string,
+	dailyNotesSupernotePath?: string,
+	/** The location of Supernote daily note files  */
+	dailyNotesObsidianPath?: string,
 }
 
 export const DAILY_NOTE_IMPORTER_DEFAULT_SETTINGS: DailyNoteImporterSettings = {}
@@ -22,31 +24,87 @@ function getYYYYMMDD(date = new Date()) {
 // Settings for the daily note importer
 export function createDailyNoteImporterSettings(plugin: SupernotePlugin, containerEl: HTMLElement) {
 	new Setting(containerEl)
-			.setName('Daily Notes Import Path')
-			.setDesc('The file path to the folder containing the daily note files exported from Supernote')
-			.addText(text => text
-				.setPlaceholder('path/to/daily/notes')
-				.setValue(plugin.settings.dailyNotesPath ?? '')
-				.onChange(async (value) => {
-					plugin.settings.dailyNotesPath = value;
-					await plugin.saveSettings();
-				})
-			);
+		.setName('Daily Notes Import Path')
+		.setDesc('The file path to the folder containing the daily note files exported from Supernote')
+		.addText(text => text
+			.setPlaceholder('path/to/daily/notes')
+			.setValue(plugin.settings.dailyNotesSupernotePath ?? '')
+			.onChange(async (value) => {
+				plugin.settings.dailyNotesSupernotePath = value;
+				await plugin.saveSettings();
+			})
+		);
+
+	new Setting(containerEl)
+		.setName('Daily Notes Path')
+		.setDesc('The relative path in your vault where your daily notes will be created')
+		.addText(text => text
+			.setPlaceholder('path/to/daily/notes')
+			.setValue(plugin.settings.dailyNotesObsidianPath ?? '')
+			.onChange(async (value) => {
+				plugin.settings.dailyNotesObsidianPath = value;
+				await plugin.saveSettings();
+			})
+		);
 }
 
-export function addDailyNoteImporterCommand(plugin: SupernotePlugin) {
-	console.log('Adding daily note importer command');
-	plugin.addCommand({
-		id: 'import-supernote-daily-note',
-		name: 'Import Daily Note from Supernote',
-		checkCallback(checking) {
-			const filePath = join(plugin.settings.dailyNotesPath ?? '', `${getYYYYMMDD()}.note`);
-			const fileExists = existsSync(filePath);
+async function onDailyNoteCreate(file: TAbstractFile, plugin: SupernotePlugin) {
+	const dailyNoteFile = plugin.app.vault.getFileByPath(file.path);
+	if (!dailyNoteFile) {
+		return;
+	}
 
-			if (checking || !fileExists) {
-				return fileExists;
-			}
-		
-		},
-  })
+	// If the file is not in the daily notes folder, return
+	if (dailyNoteFile.parent?.path !== plugin.settings.dailyNotesObsidianPath?.replace(/\/$/, '')) {
+		return;
+	}
+
+	const dailyNoteDate = new Date(dailyNoteFile.basename);
+	const noteFileName = `${getYYYYMMDD(dailyNoteDate)}.note`;
+	const srcNoteFile = join(plugin.settings.dailyNotesSupernotePath ?? '', noteFileName);
+	const doesNoteExist = existsSync(srcNoteFile);
+
+	// Check if there is a corresponding note file in the Supernote daily notes folder
+	if (!doesNoteExist) {
+		return;
+	}
+
+	// Import Supernote daily note into Obsidian
+	const importPath = join(
+		plugin.settings.dailyNotesObsidianPath ?? '',
+		'Note_Attachments',
+		String(dailyNoteDate.getFullYear())
+		,
+		`${dailyNoteDate.getFullYear()}_${(dailyNoteDate.getMonth() + 1).toString().padStart(2, '0')}_${dailyNoteDate.toLocaleString('default', { month: 'short' })}`
+	);
+	const content = readFileSync(srcNoteFile);
+	try {
+		plugin.app.vault.createFolder(importPath)
+	} catch {
+		// Folder already exists
+	}
+	// Copy the note file to the import path
+	const importedNoteFile = await plugin.app.vault.createBinary(join(importPath, noteFileName), content)
+
+	// Append the note file to the daily note as a resource
+	await plugin.app.vault.process(dailyNoteFile, (data) => {
+		return data.replace('{{DAILY_NOTE_ATTACHMENT}}', `![[${noteFileName}]]`)
+	});
+
+	try {
+        const newLeaf = plugin.app.workspace.getLeaf('split', 'vertical')
+        newLeaf.openFile(importedNoteFile); 
+	} catch {
+		// File does not exist
+	}
+
+}
+
+export function addDailyNotesImporter(plugin: SupernotePlugin) {
+	// Should only run in desktop app
+	if (!Platform.isDesktopApp) {
+		return
+	}
+
+	plugin.registerEvent(plugin.app.vault.on('create', async (file) => await onDailyNoteCreate(file, plugin)));
 }
