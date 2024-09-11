@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import SupernotePlugin, { processSupernoteText } from "./main";
-import { Notice, Platform, Setting, TAbstractFile, TFile } from 'obsidian';
+import { Notice, Platform, Setting, TAbstractFile } from 'obsidian';
 import { SupernoteX } from './supernote-typescript/lib';
 
 
@@ -34,6 +34,9 @@ function removeDateFromStartOFText(text: string) : string {
 
 // Settings for the daily note importer
 export function createDailyNoteImporterSettings(plugin: SupernotePlugin, containerEl: HTMLElement) {
+
+	containerEl.createEl('h3', { text: 'Daily Notes Importer' });
+	
 	new Setting(containerEl)
 		.setName('Daily Notes Import Path')
 		.setDesc('The file path to the folder containing the daily note files exported from Supernote')

@@ -9,6 +9,7 @@ interface SupernotePluginSettings extends CustomDictionarySettings, DailyNoteImp
 	showTOC: boolean;
 	showExportButtons: boolean;
 	collapseRecognizedText: boolean,
+	isReflowEnabled: boolean,
 }
 
 const DEFAULT_SETTINGS: SupernotePluginSettings = {
@@ -17,6 +18,7 @@ const DEFAULT_SETTINGS: SupernotePluginSettings = {
 	showTOC: true,
 	showExportButtons: true,
 	collapseRecognizedText: false,
+	isReflowEnabled: false,
 	...CUSTOM_DICTIONARY_DEFAULT_SETTINGS,
 	...DAILY_NOTE_IMPORTER_DEFAULT_SETTINGS,
 };
@@ -35,6 +37,21 @@ function generateTimestamp(): string {
 }
 
 /**
+ * Reflows the given text by removing line breaks that are followed by lowercase letters.
+ * 
+ * @param text - The text to reflow.
+ * @returns The reflowed text.
+ */
+export function reflowText(text: string): string {
+	let reflowedText = text;
+	// Remove line breaks that are followed by lowercase letters
+	const lineBreaksRegex = /\n+\s*([a-z])/gi;
+	reflowedText = reflowedText.replace(lineBreaksRegex, ' $1');
+
+	return reflowedText;
+}
+
+/**
  * Processes the Supernote text based on the provided settings.
  * 
  * @param text - The input text to be processed.
@@ -42,10 +59,14 @@ function generateTimestamp(): string {
  * @returns The processed text.
  */
 export function processSupernoteText(text: string, settings: SupernotePluginSettings): string {
+	let processedText = text;
 	if (settings.isCustomDictionaryEnabled) {
-		return replaceTextWithCustomDictionary(text, settings.customDictionary);
+		processedText = replaceTextWithCustomDictionary(processedText, settings.customDictionary);
 	}
-	return text;
+	if (settings.isReflowEnabled) {
+		processedText = reflowText(processedText);
+	}
+	return processedText;
 }
 
 class VaultWriter {
@@ -513,6 +534,20 @@ class SupernoteSettingTab extends PluginSettingTab {
 					this.plugin.settings.collapseRecognizedText = value;
 					await this.plugin.saveSettings();
 				})
+			);
+
+		new Setting(containerEl)
+			.setName('Reflow text')
+			.setDesc(
+				'Remove line breaks that are followed by lowercase letters. This can help with text recognition errors that cause line breaks in the middle of sentences.',
+			)
+			.addToggle((text) =>
+				text
+					.setValue(this.plugin.settings.isReflowEnabled)
+					.onChange(async (value) => {
+						this.plugin.settings.isReflowEnabled = value;
+						await this.plugin.saveSettings();
+					}),
 			);
 
 		// Add daily note importer settings to the settings tab
