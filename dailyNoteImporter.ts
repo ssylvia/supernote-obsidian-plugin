@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import SupernotePlugin, { processSupernoteText } from "./main";
-import { Notice, Platform, Setting, TAbstractFile } from 'obsidian';
+import { Notice, Platform, Setting, TAbstractFile, TFile } from 'obsidian';
 import { SupernoteX } from './supernote-typescript/lib';
 
 
@@ -26,6 +26,11 @@ function stringYYYYMMDDToDate(dateString: string) {
 	const [year, month, day] = dateString.split('-').map(Number); 
 	return new Date(year, month - 1, day); // Month is zero-indexed
   }
+
+function removeDateFromStartOFText(text: string) : string {
+	const regex = /^(January|February|March|April|May|June|July|August|September|October|November|December)\s*\d*\s*/gi
+	return text.replace(regex, '');
+}
 
 // Settings for the daily note importer
 export function createDailyNoteImporterSettings(plugin: SupernotePlugin, containerEl: HTMLElement) {
@@ -111,11 +116,13 @@ async function onDailyNoteCreate(file: TAbstractFile, plugin: SupernotePlugin) {
 		}
 	}
 
+	ocrText = removeDateFromStartOFText(ocrText);
+
 	await navigator.clipboard.writeText(ocrText);
 
 	// Append the note file to the daily note as a resource
 	await plugin.app.vault.process(dailyNoteFile, (data) => {
-		return data.replace('{{DAILY_NOTE_ATTACHMENT}}', `![[${noteFileName}]]`)
+		return data.replace('{{DAILY_NOTE_ATTACHMENT}}', `![[${noteFileName}]]`).replace('{{DAILY_NOTE_TEXT}}', ocrText);
 	});
 
 	// Notify the user that the note has been imported
