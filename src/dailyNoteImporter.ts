@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import SupernotePlugin, { processSupernoteText } from "./main";
 import { Notice, Platform, Setting, TAbstractFile } from 'obsidian';
-import { SupernoteX } from './supernote-typescript/lib';
+import { SupernoteX } from '../supernote-typescript/lib';
 
 
 /** Settings for Supernote's plugin daily note importer */
@@ -139,5 +139,5 @@ export function addDailyNotesImporter(plugin: SupernotePlugin) {
 		return
 	}
 
-	plugin.registerEvent(plugin.app.vault.on('create', async (file) => await onDailyNoteCreate(file, plugin)));
+	plugin.registerEvent(plugin.app.vault.on('create', async (file: TAbstractFile) => await onDailyNoteCreate(file, plugin)));
 }

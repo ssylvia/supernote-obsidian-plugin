@@ -1,14 +1,19 @@
 import { App, Modal, TFile, Plugin, PluginSettingTab, Editor, Setting, MarkdownView, WorkspaceLeaf, FileView } from 'obsidian';
-import { SupernoteX, toImage, fetchMirrorFrame } from 'supernote-typescript';
+import { SupernoteX, fetchMirrorFrame } from 'supernote-typescript';
 import { CustomDictionarySettings, CUSTOM_DICTIONARY_DEFAULT_SETTINGS, createCustomDictionarySettingsUI, replaceTextWithCustomDictionary } from './customDictionary';
 import { addDailyNotesImporter, createDailyNoteImporterSettings, DAILY_NOTE_IMPORTER_DEFAULT_SETTINGS, DailyNoteImporterSettings } from './dailyNoteImporter';
+import { FileListModal } from './FileListModal';
+import { jsPDF } from 'jspdf';
+import { SupernoteWorkerMessage, SupernoteWorkerResponse } from './myworker.worker';
+import Worker from 'myworker.worker';
 
-interface SupernotePluginSettings extends CustomDictionarySettings, DailyNoteImporterSettings {
+export interface SupernotePluginSettings extends CustomDictionarySettings, DailyNoteImporterSettings {
 	mirrorIP: string;
 	invertColorsWhenDark: boolean;
 	showTOC: boolean;
 	showExportButtons: boolean;
 	collapseRecognizedText: boolean,
+	noteImageMaxDim: number;
 	isReflowEnabled: boolean,
 }
 
@@ -18,6 +23,7 @@ const DEFAULT_SETTINGS: SupernotePluginSettings = {
 	showTOC: true,
 	showExportButtons: true,
 	collapseRecognizedText: false,
+	noteImageMaxDim: 800, // Sensible default for Nomad pages to be legible but not too big. Unit: px
 	isReflowEnabled: false,
 	...CUSTOM_DICTIONARY_DEFAULT_SETTINGS,
 	...DAILY_NOTE_IMPORTER_DEFAULT_SETTINGS,
@@ -69,6 +75,107 @@ export function processSupernoteText(text: string, settings: SupernotePluginSett
 	return processedText;
 }
 
+function dataUrlToBuffer(dataUrl: string): ArrayBuffer {
+    // Remove data URL prefix (e.g., "data:image/png;base64,")
+    const base64 = dataUrl.split(',')[1];
+    // Convert base64 to binary string
+    const binaryString = atob(base64);
+    // Create buffer and view
+    const bytes = new Uint8Array(binaryString.length);
+    // Convert binary string to buffer
+    for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes.buffer;
+}
+
+export class WorkerPool {
+    private workers: Worker[];
+
+    constructor(private maxWorkers: number = navigator.hardwareConcurrency) {
+        this.workers = Array(maxWorkers).fill(null).map(() =>
+            new Worker()
+        );
+    }
+
+    private processChunk(worker: Worker, note: SupernoteX, pageNumbers: number[]): Promise<any[]> {
+        return new Promise((resolve, reject) => {
+            const startTime = Date.now();
+
+            worker.onmessage = (e: MessageEvent<SupernoteWorkerResponse>) => {
+                const duration = Date.now() - startTime;
+                //console.log(`Processed pages ${pageNumbers.join(',')} in ${duration}ms`);
+
+                if (e.data.error) {
+                    reject(new Error(e.data.error));
+                } else {
+                    resolve(e.data.images);
+                }
+            };
+
+            worker.onerror = (error) => {
+                console.error('Worker error:', error);
+                reject(error);
+            };
+
+            const message: SupernoteWorkerMessage = {
+                type: 'convert',
+                note,
+                pageNumbers
+            };
+
+            worker.postMessage(message);
+        });
+    }
+
+    async processPages(note: SupernoteX, allPageNumbers: number[]): Promise<any[]> {
+        //console.time('Total processing time');
+
+        // Split pages into chunks based on number of workers
+        const chunkSize = Math.ceil(allPageNumbers.length / this.workers.length);
+        const chunks: number[][] = [];
+
+        for (let i = 0; i < allPageNumbers.length; i += chunkSize) {
+            chunks.push(allPageNumbers.slice(i, i + chunkSize));
+        }
+
+        //console.log(`Processing ${allPageNumbers.length} pages in ${chunks.length} chunks`);
+
+        // Process chunks in parallel using available workers
+        const results = await Promise.all(
+            chunks.map((chunk, index) =>
+                this.processChunk(this.workers[index % this.workers.length], note, chunk)
+            )
+        );
+
+        //console.timeEnd('Total processing time');
+        return results.flat();
+    }
+
+    terminate() {
+        this.workers.forEach(worker => worker.terminate());
+        this.workers = [];
+    }
+}
+
+export class ImageConverter {
+    private workerPool: WorkerPool;
+
+    constructor(maxWorkers = navigator.hardwareConcurrency) {  // Default to 4 workers
+        this.workerPool = new WorkerPool(maxWorkers);
+    }
+
+    async convertToImages(note: SupernoteX, pageNumbers?: number[]): Promise<any[]> {
+        const pages = pageNumbers ?? Array.from({length: note.pages.length}, (_, i) => i+1);
+        const results = await this.workerPool.processPages(note, pages);
+        return results;
+    }
+
+    terminate() {
+        this.workerPool.terminate();
+    }
+}
+
 class VaultWriter {
 	app: App;
 	settings: SupernotePluginSettings;
@@ -111,11 +218,21 @@ class VaultWriter {
 	}
 
 	async writeImageFiles(file: TFile, sn: SupernoteX): Promise<TFile[]> {
-		let images = await toImage(sn);
+		let images: string[] = [];
+
+		const converter = new ImageConverter();
+		try {
+			images = await converter.convertToImages(sn);
+		} finally {
+			// Clean up the worker when done
+			converter.terminate();
+		}
+
 		let imgs: TFile[] = [];
 		for (let i = 0; i < images.length; i++) {
 			let filename = await this.app.fileManager.getAvailablePathForAttachment(`${file.basename}-${i}.png`);
-			imgs.push(await this.app.vault.createBinary(filename, images[i].toBuffer()));
+			const buffer = dataUrlToBuffer(images[i]);
+			imgs.push(await this.app.vault.createBinary(filename, buffer));
 		}
 		return imgs;
 	}
@@ -153,6 +270,49 @@ class VaultWriter {
 
 		this.writeNoteToClipboard(file, sn, null);
 	}
+
+	async exportToPDF(file: TFile) {
+		const note = await this.app.vault.readBinary(file);
+		let sn = new SupernoteX(new Uint8Array(note));
+
+		// Create PDF document
+		const pdf = new jsPDF({
+			orientation: 'portrait',
+			unit: 'px',
+			format: [sn.pageWidth, sn.pageHeight] // A4 size in pixels
+		});
+
+		// Convert note pages to images
+		const converter = new ImageConverter();
+		let images: string[] = [];
+		try {
+			images = await converter.convertToImages(sn);
+		} finally {
+			converter.terminate();
+		}
+
+		// Add each page to PDF
+		for (let i = 0; i < images.length; i++) {
+			if (i > 0) {
+				pdf.addPage();
+			}
+
+			if (sn.pages[i].text !== undefined && sn.pages[i].text.length > 0) {
+				pdf.setFontSize(100);
+				pdf.setTextColor(0, 0, 0, 0); // Transparent text
+				pdf.text(sn.pages[i].text, 20, 20, { maxWidth: sn.pageWidth });
+				pdf.setTextColor(0, 0, 0, 1);
+			}
+
+			// Add image first
+			pdf.addImage(images[i], 'PNG', 0, 0, sn.pageWidth, sn.pageHeight);
+		}
+
+		// Generate filename and save
+		let filename = await this.app.fileManager.getAvailablePathForAttachment(`${file.basename}.pdf`);
+		const pdfOutput = pdf.output('arraybuffer');
+		await this.app.vault.createBinary(filename, pdfOutput);
+	}
 }
 
 let vw: VaultWriter;
@@ -184,7 +344,15 @@ export class SupernoteView extends FileView {
 
 		const note = await this.app.vault.readBinary(file);
 		let sn = new SupernoteX(new Uint8Array(note));
-		let images = await toImage(sn);
+		let images: string[] = [];
+
+		const converter = new ImageConverter();
+		try {
+			images = await converter.convertToImages(sn);
+		} finally {
+			// Clean up the worker when done
+			converter.terminate();
+		}
 
 		if (this.settings.showExportButtons) {
 
@@ -214,6 +382,15 @@ export class SupernoteView extends FileView {
 			exportAllBtn.addEventListener("click", async () => {
 				vw.attachNoteFiles(file);
 			});
+
+			const exportPDFBtn = container.createEl("p").createEl("button", {
+				text: "Attach as PDF",
+				cls: "mod-cta",
+			});
+
+			exportPDFBtn.addEventListener("click", async () => {
+				vw.exportToPDF(file);
+			});
 		}
 
 		if (images.length > 1 && this.settings.showTOC) {
@@ -229,10 +406,15 @@ export class SupernoteView extends FileView {
 		}
 
 		for (let i = 0; i < images.length; i++) {
-			const imageDataUrl = images[i].toDataURL();
+			const imageDataUrl = images[i];
+
+			const pageContainer = container.createEl("div", {
+				cls: 'page-container',
+			})
+			pageContainer.setAttr('style', 'max-width: ' + this.settings.noteImageMaxDim + 'px;')
 
 			if (images.length > 1 && this.settings.showTOC) {
-				const a = container.createEl("a");
+				const a = pageContainer.createEl("a");
 				a.id = `page${i + 1}`;
 				a.href = "#toc";
 				a.createEl("h3", { text: `Page ${i + 1}` });
@@ -244,37 +426,39 @@ export class SupernoteView extends FileView {
 
 				// If Collapse Text setting is enabled, place the text into an HTML `details` element
 				if (this.settings.collapseRecognizedText) {
-					text = container.createEl('details', {
+					text = pageContainer.createEl('details', {
 						text: '\n' + processSupernoteText(sn.pages[i].text, this.settings),
+						cls: 'page-recognized-text',
 					});
 					text.createEl('summary', { text: `Page ${i + 1} Recognized Text` });
 				} else {
-					text = container.createEl('div', {
+					text = pageContainer.createEl('div', {
 						text: processSupernoteText(sn.pages[i].text, this.settings),
+						cls: 'page-recognized-text',
 					});
 				}
-
-				text.setAttr('style', 'user-select: text; white-space: pre-line; margin-top: 1.2em;');
 			}
 
 			// Show the img of the page
-			const imgElement = container.createEl("img");
+			const imgElement = pageContainer.createEl("img");
 			imgElement.src = imageDataUrl;
 			if (this.settings.invertColorsWhenDark) {
 				imgElement.addClass("supernote-invert-dark");
 			}
+			imgElement.setAttr('style', 'max-height: ' + this.settings.noteImageMaxDim + 'px;')
 			imgElement.draggable = true;
 
 			// Create a button to save image to vault
 			if (this.settings.showExportButtons) {
-				const saveButton = container.createEl("button", {
+				const saveButton = pageContainer.createEl("button", {
 					text: "Save image to vault",
 					cls: "mod-cta",
 				});
 
 				saveButton.addEventListener("click", async () => {
-					const filename = await this.app.fileManager.getAvailablePathForAttachment(`${file.basename}}.png`);
-					await this.app.vault.createBinary(filename, images[i].toBuffer());
+					const filename = await this.app.fileManager.getAvailablePathForAttachment(`${file.basename}-${i}.png`);
+					const buffer = dataUrlToBuffer(imageDataUrl);
+					await this.app.vault.createBinary(filename, buffer);
 				});
 			}
 		}
@@ -291,6 +475,18 @@ export default class SupernotePlugin extends Plugin {
 		vw = new VaultWriter(this.app, this.settings);
 
 		this.addSettingTab(new SupernoteSettingTab(this.app, this));
+
+		this.addCommand({
+			id: 'attach-supernote-file-from-device',
+			name: 'Attach Supernote file from device',
+			callback: () => {
+				if (this.settings.mirrorIP.length === 0) {
+					new MirrorErrorModal(this.app, this.settings, new Error("IP is unset")).open();
+					return;
+				}
+				new FileListModal(this.app, this.settings).open();
+			}
+		});
 
 		this.registerView(
 			VIEW_TYPE_SUPERNOTE,
@@ -342,6 +538,32 @@ export default class SupernotePlugin extends Plugin {
 							throw new Error("No file to attach");
 						}
 						vw.attachNoteFiles(file);
+					} catch (err: any) {
+						new ErrorModal(this.app, err).open();
+					}
+					return true;
+				}
+
+				return false;
+			},
+		});
+
+		this.addCommand({
+			id: 'export-supernote-note-as-pdf',
+			name: 'Export this Supernote note as PDF',
+			checkCallback: (checking: boolean) => {
+				const file = this.app.workspace.getActiveFile();
+				const ext = file?.extension;
+
+				if (ext === "note") {
+					if (checking) {
+						return true
+					}
+					try {
+						if (!file) {
+							throw new Error("No file to attach");
+						}
+						vw.exportToPDF(file);
 					} catch (err: any) {
 						new ErrorModal(this.app, err).open();
 					}
@@ -536,6 +758,19 @@ class SupernoteSettingTab extends PluginSettingTab {
 				})
 			);
 
+		new Setting(containerEl) 
+			.setName('Max image side length in .note files')
+			.setDesc('Maximum width and height (in pixels) of the note image when viewing .note files. Does not affect exported images and markdown.')
+			.addSlider(text => text
+				.setLimits(200, 1900, 100) // Resolution of an A5X/A6X2/Nomad page is 1404 x 1872 px (with no upscaling)
+				.setDynamicTooltip()
+				.setValue(this.plugin.settings.noteImageMaxDim)
+				.onChange(async (value) => {
+					this.plugin.settings.noteImageMaxDim = value;
+					await this.plugin.saveSettings();
+				})
+			);
+
 		new Setting(containerEl)
 			.setName('Reflow text')
 			.setDesc(
@@ -555,6 +790,5 @@ class SupernoteSettingTab extends PluginSettingTab {
 
 		// Add custom dictionary settings to the settings tab
 		createCustomDictionarySettingsUI(containerEl, this.plugin);
-
 	}
 }

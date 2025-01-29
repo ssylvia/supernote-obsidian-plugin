@@ -6,13 +6,15 @@ But, I already use Obsidian for organizing and capturing all of my digital notes
 
 This plugin enables me (and now you!) to import handwritten notes into Obsidian and view them on a desktop, phone or tablet.
 
-This plugin has three main features:
+This plugin has four main features:
 
 - 📝 View Supernote `*.note` files in your Obsidian Vault. You can link to these notes from your Markdown notes too `[My Note](example.note)`.
 
 - ➡️  Export Supernote `*.note` files as PNGs and/or markdown files and attach them to your Vault.
 
 - 📺 Copy an image from a Supernote via [screen mirroring](https://support.supernote.com/en_US/organizing-managing/1791924-screen-mirroring) into your current note with the "Insert Supernote mirror image" command ([demo video](https://youtu.be/Ih_NW-z_aLw))
+
+- ⬇️  Download files directly from your device via the Supernote [Browse & Access](https://support.supernote.com/en_US/Tools-Features/wi-fi-transfer) feature. ([demo video](https://www.youtube.com/watch?v=SEkp395hbBM))
 
 **Video Demo**
 
@@ -52,10 +54,6 @@ Thank you to [Tiemen Schuijbroek](https://gitlab.com/Tiemen/supernote) for devel
 **Q** Why isn't there a table of contents in the generated Markdown file? 
 
 **A** Because the [Obsidian Outline](https://help.obsidian.md/Plugins/Outline) sidebar accomplishes this same feature.
-
-**Q** Can the images be larger or smaller?
-
-**A** Add a number, in pixels, after a `|` in the link like `![[20240419_100426-0.png|100]]`. [See Obsidian docs](https://help.obsidian.md/Linking+notes+and+files/Embed+files#Embed+an+image+in+a+note). Also, you can use the mouse wheel zoom plugin suggested below to make this easier.
 
 ## Other Helpful Plugins
 
