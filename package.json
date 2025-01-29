@@ -4,6 +4,7 @@
 	"description": "Unofficial Supernote by Ratta Integration for Obsidian",
 	"main": "main.js",
 	"scripts": {
+		"preversion": "node preversion.js",
 		"dev": "node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
 		"version": "node version-bump.mjs && git add manifest.json versions.json"
@@ -27,6 +28,7 @@
 		"esbuild-plugin-inline-worker": "^0.1.1",
 		"image-js": "^0.35.5",
 		"jspdf": "^2.5.2",
+		"readline": "^1.3.0",
 		"supernote": "github:philips/supernote-typescript"
 	}
 }
