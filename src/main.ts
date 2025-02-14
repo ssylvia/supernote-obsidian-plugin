@@ -1,33 +1,13 @@
-import { App, Modal, TFile, Plugin, PluginSettingTab, Editor, Setting, MarkdownView, WorkspaceLeaf, FileView } from 'obsidian';
+import { installAtPolyfill } from './polyfills';
+import { App, Modal, TFile, Plugin, Editor, MarkdownView, WorkspaceLeaf, FileView } from 'obsidian';
+import { SupernotePluginSettings, SupernoteSettingTab, DEFAULT_SETTINGS } from './settings';
 import { SupernoteX, fetchMirrorFrame } from 'supernote-typescript';
-import { CustomDictionarySettings, CUSTOM_DICTIONARY_DEFAULT_SETTINGS, createCustomDictionarySettingsUI, replaceTextWithCustomDictionary } from './customDictionary';
-import { addDailyNotesImporter, createDailyNoteImporterSettings, DAILY_NOTE_IMPORTER_DEFAULT_SETTINGS, DailyNoteImporterSettings } from './dailyNoteImporter';
-import { FileListModal } from './FileListModal';
+import { DownloadListModal, UploadListModal } from './FileListModal';
 import { jsPDF } from 'jspdf';
 import { SupernoteWorkerMessage, SupernoteWorkerResponse } from './myworker.worker';
 import Worker from 'myworker.worker';
-
-export interface SupernotePluginSettings extends CustomDictionarySettings, DailyNoteImporterSettings {
-	mirrorIP: string;
-	invertColorsWhenDark: boolean;
-	showTOC: boolean;
-	showExportButtons: boolean;
-	collapseRecognizedText: boolean,
-	noteImageMaxDim: number;
-	isReflowEnabled: boolean,
-}
-
-const DEFAULT_SETTINGS: SupernotePluginSettings = {
-	mirrorIP: '',
-	invertColorsWhenDark: true,
-	showTOC: true,
-	showExportButtons: true,
-	collapseRecognizedText: false,
-	noteImageMaxDim: 800, // Sensible default for Nomad pages to be legible but not too big. Unit: px
-	isReflowEnabled: false,
-	...CUSTOM_DICTIONARY_DEFAULT_SETTINGS,
-	...DAILY_NOTE_IMPORTER_DEFAULT_SETTINGS,
-};
+import { replaceTextWithCustomDictionary } from './customDictionary';
+import { addDailyNotesImporter } from './dailyNoteImporter';
 
 function generateTimestamp(): string {
 	const date = new Date();
@@ -471,6 +451,9 @@ export default class SupernotePlugin extends Plugin {
 	settings: SupernotePluginSettings;
 
 	async onload() {
+        // Install polyfills before any other code runs
+        installAtPolyfill();
+
 		await this.loadSettings();
 		vw = new VaultWriter(this.app, this.settings);
 
@@ -480,11 +463,26 @@ export default class SupernotePlugin extends Plugin {
 			id: 'attach-supernote-file-from-device',
 			name: 'Attach Supernote file from device',
 			callback: () => {
-				if (this.settings.mirrorIP.length === 0) {
-					new MirrorErrorModal(this.app, this.settings, new Error("IP is unset")).open();
+				if (this.settings.directConnectIP.length === 0) {
+					new DirectConnectErrorModal(this.app, this.settings, new Error("IP is unset")).open();
 					return;
 				}
-				new FileListModal(this.app, this.settings).open();
+				new DownloadListModal(this.app, this).open();
+			}
+		});
+
+		this.addCommand({
+			id: 'upload-file-to-supernote',
+			name: 'Upload the current file to a Supernote device',
+			callback: () => {
+				if (this.settings.directConnectIP.length === 0) {
+					new DirectConnectErrorModal(this.app, this.settings, new Error("IP is unset")).open();
+					return;
+				}
+				const activeFile = this.app.workspace.getActiveFile();
+				if (activeFile) {
+					new UploadListModal(this.app, this, activeFile).open();
+				}
 			}
 		});
 
@@ -504,10 +502,10 @@ export default class SupernotePlugin extends Plugin {
 				const filename = await this.app.fileManager.getAvailablePathForAttachment(`supernote-mirror-${f}-${ts}.png`);
 
 				try {
-					if (this.settings.mirrorIP.length == 0) {
+					if (this.settings.directConnectIP.length == 0) {
 						throw new Error("IP is unset, please set in Supernote plugin settings")
 					}
-					let image = await fetchMirrorFrame(`${this.settings.mirrorIP}:8080`);
+					let image = await fetchMirrorFrame(`${this.settings.directConnectIP}:8080`);
 
 					const file = await this.app.vault.createBinary(filename, image.toBuffer());
 					const path = this.app.workspace.activeEditor?.file?.path;
@@ -517,7 +515,7 @@ export default class SupernotePlugin extends Plugin {
 					const link = this.app.fileManager.generateMarkdownLink(file, path);
 					editor.replaceRange(link, editor.getCursor());
 				} catch (err: any) {
-					new MirrorErrorModal(this.app, this.settings, err).open();
+					new DirectConnectErrorModal(this.app, this.settings, err).open();
 				}
 			},
 		});
@@ -641,9 +639,9 @@ export default class SupernotePlugin extends Plugin {
 }
 
 
-class MirrorErrorModal extends Modal {
+class DirectConnectErrorModal extends Modal {
 	error: Error;
-	settings: SupernotePluginSettings;
+	public settings: SupernotePluginSettings;
 
 	constructor(app: App, settings: SupernotePluginSettings, error: Error) {
 		super(app);
@@ -653,7 +651,7 @@ class MirrorErrorModal extends Modal {
 
 	onOpen() {
 		const { contentEl } = this;
-		contentEl.setText(`Error: ${this.error.message}. Is the Supernote connected to Wifi on IP ${this.settings.mirrorIP} and running Screen Mirroring?`);
+		contentEl.setText(`Error: ${this.error.message}. Is the Supernote connected to Wifi on IP ${this.settings.directConnectIP} and running Screen Mirroring?`);
 	}
 
 	onClose() {
@@ -679,116 +677,5 @@ class ErrorModal extends Modal {
 	onClose() {
 		const { contentEl } = this;
 		contentEl.empty();
-	}
-}
-
-
-class SupernoteSettingTab extends PluginSettingTab {
-	plugin: SupernotePlugin;
-
-	constructor(app: App, plugin: SupernotePlugin) {
-		super(app, plugin);
-		this.plugin = plugin;
-	}
-
-	display(): void {
-		const { containerEl } = this;
-
-		containerEl.empty();
-
-		new Setting(containerEl)
-			.setName('Supernote IP address for "Screen Mirroring"')
-			.setDesc('See Supernote "Screen Mirroring" documentation for how to enable')
-			.addText(text => text
-				.setPlaceholder('IP )e.g. 192.168.1.2')
-				.setValue(this.plugin.settings.mirrorIP)
-				.onChange(async (value) => {
-					this.plugin.settings.mirrorIP = value;
-					await this.plugin.saveSettings();
-				})
-			);
-
-		new Setting(containerEl)
-			.setName('Invert colors in "Dark mode"')
-			.setDesc('When Obsidian is in "Dark mode" increase image visibility by inverting colors of images')
-			.addToggle(text => text
-				.setValue(this.plugin.settings.invertColorsWhenDark)
-				.onChange(async (value) => {
-					this.plugin.settings.invertColorsWhenDark = value;
-					await this.plugin.saveSettings();
-				})
-			);
-
-		new Setting(containerEl)
-			.setName('Show table of contents and page headings')
-			.setDesc(
-				'When viewing .note files, show a table of contents and page number headings',
-			)
-			.addToggle((text) =>
-				text
-					.setValue(this.plugin.settings.showTOC)
-					.onChange(async (value) => {
-						this.plugin.settings.showTOC = value;
-						await this.plugin.saveSettings();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName('Show export buttons')
-			.setDesc(
-				'When viewing .note files, show buttons for exporting images and/or markdown files to vault. These features can still be accessed via the command pallete.',
-			)
-			.addToggle((text) =>
-				text
-					.setValue(this.plugin.settings.showExportButtons)
-					.onChange(async (value) => {
-						this.plugin.settings.showExportButtons = value;
-						await this.plugin.saveSettings();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName('Collapse recognized text')
-			.setDesc('When viewing .note files, hide recognized text in a collapsible element. This does not affect exported markdown.')
-			.addToggle(text => text
-				.setValue(this.plugin.settings.collapseRecognizedText)
-				.onChange(async (value) => {
-					this.plugin.settings.collapseRecognizedText = value;
-					await this.plugin.saveSettings();
-				})
-			);
-
-		new Setting(containerEl) 
-			.setName('Max image side length in .note files')
-			.setDesc('Maximum width and height (in pixels) of the note image when viewing .note files. Does not affect exported images and markdown.')
-			.addSlider(text => text
-				.setLimits(200, 1900, 100) // Resolution of an A5X/A6X2/Nomad page is 1404 x 1872 px (with no upscaling)
-				.setDynamicTooltip()
-				.setValue(this.plugin.settings.noteImageMaxDim)
-				.onChange(async (value) => {
-					this.plugin.settings.noteImageMaxDim = value;
-					await this.plugin.saveSettings();
-				})
-			);
-
-		new Setting(containerEl)
-			.setName('Reflow text')
-			.setDesc(
-				'Remove line breaks that are followed by lowercase letters. This can help with text recognition errors that cause line breaks in the middle of sentences.',
-			)
-			.addToggle((text) =>
-				text
-					.setValue(this.plugin.settings.isReflowEnabled)
-					.onChange(async (value) => {
-						this.plugin.settings.isReflowEnabled = value;
-						await this.plugin.saveSettings();
-					}),
-			);
-
-		// Add daily note importer settings to the settings tab
-		createDailyNoteImporterSettings(this.plugin, containerEl);
-
-		// Add custom dictionary settings to the settings tab
-		createCustomDictionarySettingsUI(containerEl, this.plugin);
 	}
 }
