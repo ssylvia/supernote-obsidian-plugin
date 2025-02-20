@@ -45,7 +45,6 @@ export function reflowText(text: string): string {
  * @returns The processed text.
  */
 export function processSupernoteText(text: string, settings: SupernotePluginSettings): string {
-	console.log('Processing text with settings:', settings);
 	let processedText = text;
 	if (settings.isCustomDictionaryEnabled) {
 		processedText = replaceTextWithCustomDictionary(processedText, settings.customDictionary);
